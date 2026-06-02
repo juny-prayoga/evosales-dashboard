@@ -621,7 +621,7 @@ elif menu == "Input Daily Report":
     file = st.file_uploader("Upload File Excel", type=["xlsx"])
     
     if file:
-        try:
+        try: # <--- INI ADALAH 'TRY' UTAMA (Pasangannya ada di paling bawah)
             # 1. Baca File
             df_up = pd.read_excel(file)
             
@@ -641,15 +641,11 @@ elif menu == "Input Daily Report":
                 # 3. Bersihkan Data
                 df_up['imei'] = df_up['imei'].astype(str).str.strip()
                 
-                # ====================================================================
-                # --- FIX: STEMPEL TOKO SECARA PERMANEN SAAT UPLOAD ---
-                # Mengunci nama toko sesuai dengan status promotor SAAT INI
-                # ====================================================================
-                from database import get_all_store_mappings # Pastikan ini di-import
+                # FIX: STEMPEL TOKO SECARA PERMANEN SAAT UPLOAD
+                from database import get_all_store_mappings 
                 df_map_toko = get_all_store_mappings()
                 dict_toko_saat_ini = dict(zip(df_map_toko['promotor'].str.upper(), df_map_toko['store_name'].str.upper()))
                 df_up['toko'] = df_up['promotor'].str.upper().map(dict_toko_saat_ini).fillna('UNKNOWN')
-                # ====================================================================
                 
                 # Filter Tipe Aksesoris
                 if 'tipe' in df_up.columns:
@@ -661,10 +657,10 @@ elif menu == "Input Daily Report":
                 else:
                     df_clean = df_up.copy()
 
-                # 4. CEK DUPLIKAT & PERUBAHAN (LOGIKA UPSERT)
-                # Ambil data dari database untuk dicocokkan
+                # 4. CEK DUPLIKAT & PERUBAHAN (LOGIKA UPSERT VIA SUPABASE)
                 from database import get_connection
                 engine = get_connection()
+                
                 try:
                     df_db = pd.read_sql("SELECT * FROM sales_daily", engine)
                 except:
@@ -672,15 +668,17 @@ elif menu == "Input Daily Report":
                 
                 dict_db = df_db.set_index('imei').to_dict('index') if not df_db.empty and 'imei' in df_db.columns else {}
                 
+                list_insert = []
+                list_update = []
+                list_skip = []
+                
                 # Cek satu per satu baris Excel
                 for _, row in df_clean.iterrows():
                     imei_val = str(row['imei']).strip()
                     
                     if imei_val not in dict_db:
-                        # KONDISI A: IMEI Baru
                         list_insert.append(row)
                     else:
-                        # KONDISI B: IMEI Sudah Ada -> Cek apakah ada perbedaan data
                         data_lama = dict_db[imei_val]
                         ada_beda = False
                         
@@ -689,11 +687,9 @@ elif menu == "Input Daily Report":
                                 v_baru = str(row[col]).strip()
                                 v_lama = str(data_lama[col]).strip()
                                 
-                                # Samakan format kosong
                                 if v_baru.lower() in ['nan', 'none', '']: v_baru = ''
                                 if v_lama.lower() in ['nan', 'none', '']: v_lama = ''
                                 
-                                # Abaikan beda desimal (misal 10.0 dan 10)
                                 try:
                                     if float(v_baru) == float(v_lama): continue
                                 except ValueError:
@@ -704,9 +700,9 @@ elif menu == "Input Daily Report":
                                     break
                         
                         if ada_beda:
-                            list_update.append(row) # KONDISI B1: Data Beda -> Update
+                            list_update.append(row) 
                         else:
-                            list_skip.append(row)   # KONDISI B2: Data Sama Persis -> Skip
+                            list_skip.append(row)   
                             
                 df_insert = pd.DataFrame(list_insert)
                 df_update = pd.DataFrame(list_update)
@@ -721,11 +717,9 @@ elif menu == "Input Daily Report":
                 c3.metric("🔄 Perlu Diperbarui (Update)", len(df_update))
                 c4.metric("⏭️ Dilewati (Sama Persis)", len(df_skip), delta_color="inverse")
                 
-                # Tampilkan rincian (Transparansi)
                 if not df_update.empty:
                     with st.expander(f"⚠️ Lihat {len(df_update)} Data yang akan di-Update (Timpa)"):
                         st.dataframe(df_update[['promotor', 'tipe', 'imei']], use_container_width=True)
-                        st.caption("Data ini memiliki IMEI yang sama, tapi detail kolom lain berbeda dari database lama.")
                         
                 if not df_skip.empty:
                     with st.expander(f"⏭️ Lihat {len(df_skip)} Data yang Dilewati"):
@@ -764,11 +758,18 @@ elif menu == "Input Daily Report":
                             st.success(f"✅ Sukses! Database berhasil diperbarui.")
                             st.balloons()
                             st.rerun()
-                            
-                        # PASTIKAN DUA BARIS INI ADA DAN SEJAJAR DENGAN 'try:' DI ATAS
                         except Exception as e:
                             st.error(f"Gagal menyimpan ke database: {e}")
+                else:
+                    st.warning("Tidak ada data baru atau data yang perlu diupdate. Sistem aman!")
 
+        # --- INI DIA BAGIAN YANG HILANG SEBELUMNYA ---
+        except Exception as e:
+            st.error(f"Gagal memproses file Excel: {e}")
+
+# ==============================================================================
+# 4. LIHAT DATA & FILTER (DENGAN FITUR HAPUS)
+# ==============================================================================
 # ==============================================================================
 # 4. LIHAT DATA & FILTER (DENGAN FITUR HAPUS)
 # ==============================================================================
