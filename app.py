@@ -663,15 +663,14 @@ elif menu == "Input Daily Report":
 
                 # 4. CEK DUPLIKAT & PERUBAHAN (LOGIKA UPSERT)
                 # Ambil data dari database untuk dicocokkan
-                conn = sqlite3.connect('business_data.db')
-                df_db = pd.read_sql("SELECT * FROM sales_daily", conn)
-                conn.close()
+                from database import get_connection
+                engine = get_connection()
+                try:
+                    df_db = pd.read_sql("SELECT * FROM sales_daily", engine)
+                except:
+                    df_db = pd.DataFrame()
                 
                 dict_db = df_db.set_index('imei').to_dict('index') if not df_db.empty and 'imei' in df_db.columns else {}
-                
-                list_insert = []
-                list_update = []
-                list_skip = []
                 
                 # Cek satu per satu baris Excel
                 for _, row in df_clean.iterrows():
@@ -739,47 +738,34 @@ elif menu == "Input Daily Report":
                     st.info(f"Siap mengeksekusi: **{len(df_insert)}** Insert Baru dan **{len(df_update)}** Update.")
                     
                     if st.button("🚀 Eksekusi Simpan ke Database", type="primary"):
-                        conn = sqlite3.connect('business_data.db')
-                        c = conn.cursor()
+                        from sqlalchemy import text
                         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         
-                        # --- PROSES UPDATE ---
-                        if not df_update.empty:
-                            for _, row in df_update.iterrows():
-                                imei_val = str(row['imei']).strip()
-                                kolom_update = [col for col in df_update.columns if col != 'imei']
-                                set_clause = ", ".join([f"{col} = ?" for col in kolom_update])
-                                
-                                # --- FIX ERROR TIMESTAMP ---
-                                # Terjemahkan nilai 'Timestamp' menjadi Teks (String) agar SQLite paham
-                                values = []
-                                for col in kolom_update:
-                                    val = row[col]
-                                    if type(val).__name__ == 'Timestamp':
-                                        val = str(val) # Ubah ke teks
-                                    values.append(val)
-                                values.append(imei_val)
-                                # ---------------------------
-                                
-                                c.execute(f"UPDATE sales_daily SET {set_clause} WHERE imei = ?", values)
-                        
-                        # --- PROSES INSERT ---
-                        if not df_insert.empty:
-                            df_save = df_insert.copy()
-                            df_save['upload_timestamp'] = current_time
-                            df_save.to_sql('sales_daily', conn, if_exists='append', index=False)
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        st.success(f"✅ Sukses! Database berhasil diperbarui.")
-                        st.balloons()
-                        st.rerun()
-                else:
-                    st.warning("Tidak ada data baru atau data yang perlu diupdate. Sistem aman!")
-
-        except Exception as e:
-            st.error(f"Gagal memproses file: {e}")
+                        try:
+                            # --- PROSES UPDATE ---
+                            if not df_update.empty:
+                                with engine.begin() as conn:
+                                    for _, row in df_update.iterrows():
+                                        imei_val = str(row['imei']).strip()
+                                        kolom_update = [col for col in df_update.columns if col != 'imei']
+                                        set_clause = ", ".join([f"{col} = :{col}" for col in kolom_update])
+                                        query = text(f"UPDATE sales_daily SET {set_clause} WHERE imei = :imei")
+                                        
+                                        params = {col: str(row[col]) for col in kolom_update}
+                                        params["imei"] = imei_val
+                                        conn.execute(query, params)
+                            
+                            # --- PROSES INSERT ---
+                            if not df_insert.empty:
+                                df_save = df_insert.copy()
+                                df_save['upload_timestamp'] = current_time
+                                df_save.to_sql('sales_daily', engine, if_exists='append', index=False)
+                            
+                            st.success(f"✅ Sukses! Database berhasil diperbarui.")
+                            st.balloons()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Gagal menyimpan ke database: {e}")
 
 # ==============================================================================
 # 4. LIHAT DATA & FILTER (DENGAN FITUR HAPUS)
@@ -923,109 +909,43 @@ elif menu == "Lihat Data & Filter":
             st.write("---")
             if st.button("💾 SIMPAN PERUBAHAN", type="primary"):
                 try:
-                    conn = sqlite3.connect('business_data.db')
-                    c = conn.cursor()
+                    from database import get_connection
+                    from sqlalchemy import text
+                    engine = get_connection()
                     jumlah_berubah = 0
                     
-                    # Konversi ke dictionary untuk perbandingan cepat
                     data_lama = df_f.set_index('id').to_dict('index')
                     data_baru = df_hasil_edit.set_index('id').to_dict('index')
                     
-                    # Loop cek perubahan
-                    for id_transaksi, row_baru in data_baru.items():
-                        row_lama = data_lama.get(id_transaksi)
-                        
-                        if row_lama:
-                            kolom_cek = ['qty', 'harga', 'tipe', 'imei']
-                            ada_beda = False
+                    with engine.begin() as conn:
+                        for id_transaksi, row_baru in data_baru.items():
+                            row_lama = data_lama.get(id_transaksi)
                             
-                            for col in kolom_cek:
-                                val_lama = row_lama.get(col)
-                                val_baru = row_baru.get(col)
+                            if row_lama:
+                                kolom_cek = ['qty', 'harga', 'tipe', 'imei']
+                                ada_beda = False
                                 
-                                # Bandingkan nilai (konversi string biar aman)
-                                if str(val_lama) != str(val_baru):
-                                    # Update Database
-                                    query = f"UPDATE sales_daily SET {col} = ? WHERE id = ?"
-                                    c.execute(query, (val_baru, id_transaksi))
-                                    ada_beda = True
-                            
-                            if ada_beda:
-                                jumlah_berubah += 1
-                    
-                    conn.commit()
-                    conn.close()
+                                for col in kolom_cek:
+                                    val_lama = row_lama.get(col)
+                                    val_baru = row_baru.get(col)
+                                    
+                                    if str(val_lama) != str(val_baru):
+                                        query = text(f"UPDATE sales_daily SET {col} = :val WHERE id = :id")
+                                        conn.execute(query, {"val": val_baru, "id": id_transaksi})
+                                        ada_beda = True
+                                
+                                if ada_beda:
+                                    jumlah_berubah += 1
                     
                     if jumlah_berubah > 0:
-                        # --- KUNCI SUKSES DISINI ---
-                        # Kita simpan pesan sukses ke memori session
                         st.session_state["status_simpan"] = True
                         st.session_state["pesan_simpan"] = f"Berhasil menyimpan {jumlah_berubah} data!"
-                        st.rerun() # Refresh halaman (Pesan akan muncul DI ATAS setelah ini)
+                        st.rerun()
                     else:
                         st.warning("⚠️ Tidak ada perubahan yang terdeteksi. Tekan ENTER di tabel sebelum Simpan.")
                         
                 except Exception as e:
                     st.error(f"Error Sistem: {e}")
-        
-        # Checkbox agar tidak langsung loading saat buka menu
-        if st.checkbox("🔍 Cek Data Ganda (Berdasarkan IMEI)"):
-            # 1. Ambil semua data
-            df_check = get_all_sales()
-            
-            if not df_check.empty:
-                # 2. Cari IMEI yang muncul lebih dari 1 kali
-                # keep=False artinya tandai SEMUA baris yang punya kembaran
-                duplicate_mask = df_check.duplicated(subset=['imei'], keep=False)
-                df_dupes = df_check[duplicate_mask].sort_values(by=['imei', 'id'])
-                
-                if not df_dupes.empty:
-                    st.error(f"⚠️ Ditemukan **{len(df_dupes)}** baris data dengan IMEI ganda!")
-                    
-                    # Tampilkan data duplikatnya
-                    st.dataframe(
-                        df_dupes[['id', 'date_scan', 'nm_tipe', 'imei', 'promotor', 'harga']], 
-                        use_container_width=True, 
-                        hide_index=True
-                    )
-                    
-                    st.write("Solusi Otomatis:")
-                    col_fix1, col_fix2 = st.columns(2)
-                    
-                    # Opsi A: Hapus data inputan TERBARU (Simpan yang pertama kali masuk)
-                    with col_fix1:
-                        if st.button("Simpan yang LAMA, Hapus yang BARU"):
-                            ids_to_remove = []
-                            for imei, group in df_dupes.groupby('imei'):
-                                # Urutkan dari ID terkecil (lama) ke terbesar (baru)
-                                sorted_group = group.sort_values('id')
-                                # Ambil semua ID KECUALI yang pertama (index 0)
-                                ids_to_remove.extend(sorted_group.iloc[1:]['id'].tolist())
-                            
-                            if ids_to_remove:
-                                delete_sales_by_ids(ids_to_remove)
-                                st.success(f"✅ Berhasil menghapus {len(ids_to_remove)} data duplikat!")
-                                st.rerun()
-
-                    # Opsi B: Hapus data inputan LAMA (Simpan yang terakhir kali masuk)
-                    with col_fix2:
-                        if st.button("Simpan yang BARU, Hapus yang LAMA"):
-                            ids_to_remove = []
-                            for imei, group in df_dupes.groupby('imei'):
-                                sorted_group = group.sort_values('id')
-                                # Ambil semua ID KECUALI yang terakhir (index -1)
-                                ids_to_remove.extend(sorted_group.iloc[:-1]['id'].tolist())
-                            
-                            if ids_to_remove:
-                                delete_sales_by_ids(ids_to_remove)
-                                st.success(f"✅ Berhasil menghapus {len(ids_to_remove)} data duplikat!")
-                                st.rerun()
-                else:
-                    st.success("✅ Data Bersih! Tidak ditemukan IMEI ganda.")
-            else:
-                st.info("Database kosong.")
-    else:
-        st.info("Database kosong.")
 
 # ==============================================================================
 # 5. ADMIN PAGE (GABUNGAN SEMUA MENU ADMIN)
