@@ -1,207 +1,116 @@
-import sqlite3
 import pandas as pd
+import streamlit as st
+from sqlalchemy import create_engine, text
+
+# --- KONEKSI SUPABASE ---
+@st.cache_resource
+def get_connection():
+    db_url = st.secrets["SUPABASE_URL"]
+    return create_engine(db_url)
 
 def init_db():
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    
-    # ... (Tabel sales_daily, master_produk, store_mapping TETAP SAMA) ...
-    c.execute('''CREATE TABLE IF NOT EXISTS sales_daily
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  tgl TEXT, tipe TEXT, imei TEXT, qty INTEGER,
-                  date_scan TEXT, promotor TEXT, claim_type TEXT, harga REAL,
-                  upload_timestamp TEXT)''') 
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS master_produk
-                 (keyword TEXT PRIMARY KEY, category TEXT, sub_category TEXT, harga REAL)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS store_mapping
-                 (promotor TEXT PRIMARY KEY, store_name TEXT)''')
+    pass # Supabase sudah kita atur manual via SQL Editor
 
-    # --- PERUBAHAN DISINI: Tambah kolom week_period ---
-    # Kita hapus tabel lama dulu biar struktur baru bisa masuk (khusus dev mode)
-    # c.execute("DROP TABLE IF EXISTS sales_targets") 
-    # (Aktifkan baris DROP di atas SEKALI SAJA jika error, lalu matikan lagi)
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS sales_targets_weekly
-                 (store_name TEXT, category TEXT, sub_category TEXT, 
-                  week_period TEXT, target_value INTEGER,
-                  PRIMARY KEY (store_name, category, sub_category, week_period))''')
-                 
-    conn.commit()
-    conn.close()
-
-# --- FUNGSI SALES (SAMA SEPERTI SEBELUMNYA) ---
 def get_all_sales():
-    conn = sqlite3.connect('business_data.db')
-    try: df = pd.read_sql_query("SELECT * FROM sales_daily", conn)
-    except: df = pd.DataFrame()
-    conn.close()
-    return df
+    engine = get_connection()
+    try: return pd.read_sql_query("SELECT * FROM sales_daily", engine)
+    except: return pd.DataFrame()
 
 def get_existing_imeis():
-    conn = sqlite3.connect('business_data.db')
+    engine = get_connection()
     try:
-        df = pd.read_sql_query("SELECT imei FROM sales_daily WHERE imei IS NOT NULL AND imei != ''", conn)
-        existing_imeis = df['imei'].astype(str).str.strip().tolist()
-    except: existing_imeis = []
-    conn.close()
-    return existing_imeis
+        df = pd.read_sql_query("SELECT imei FROM sales_daily WHERE imei IS NOT NULL AND imei != ''", engine)
+        return df['imei'].astype(str).str.strip().tolist()
+    except: return []
 
 def update_sales_data(id_data, promotor, tipe, qty, harga):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute('''UPDATE sales_daily SET promotor=?, tipe=?, qty=?, harga=? WHERE id=?''', 
-              (promotor, tipe, qty, harga, id_data))
-    conn.commit()
-    conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE sales_daily SET promotor=:p, tipe=:t, qty=:q, harga=:h WHERE id=:id"), 
+                     {"p":promotor, "t":tipe, "q":qty, "h":harga, "id":id_data})
 
 def delete_sales_by_ids(id_list):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    ph = ', '.join('?' for _ in id_list)
-    c.execute(f"DELETE FROM sales_daily WHERE id IN ({ph})", id_list)
-    conn.commit()
-    conn.close()
+    if not id_list: return
+    engine = get_connection()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM sales_daily WHERE id IN :ids"), {"ids": tuple(id_list)})
 
-# --- FUNGSI MASTER PRODUK ---
 def add_master_produk(kw, cat, sub, prc):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO master_produk VALUES (?, ?, ?, ?)", (kw, cat, sub, prc))
-    conn.commit()
-    conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        query = """INSERT INTO master_produk (keyword, category, sub_category, harga) 
+                   VALUES (:k, :c, :s, :p) 
+                   ON CONFLICT (keyword) DO UPDATE 
+                   SET category=EXCLUDED.category, sub_category=EXCLUDED.sub_category, harga=EXCLUDED.harga"""
+        conn.execute(text(query), {"k":kw, "c":cat, "s":sub, "p":prc})
 
 def get_all_master():
-    conn = sqlite3.connect('business_data.db')
-    df = pd.read_sql_query("SELECT * FROM master_produk", conn)
-    conn.close()
-    return df
+    engine = get_connection()
+    try: return pd.read_sql_query("SELECT * FROM master_produk", engine)
+    except: return pd.DataFrame()
 
 def delete_master(kw):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM master_produk WHERE keyword = ?", (kw,))
-    conn.commit()
-    conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM master_produk WHERE keyword = :k"), {"k": kw})
 
-# --- FUNGSI MAPPING TOKO ---
 def add_store_mapping(promotor, store_name):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO store_mapping VALUES (?, ?)", (promotor.upper(), store_name.upper()))
-    conn.commit()
-    conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        query = """INSERT INTO store_mapping (promotor, store_name) 
+                   VALUES (:p, :s) 
+                   ON CONFLICT (promotor) DO UPDATE 
+                   SET store_name=EXCLUDED.store_name"""
+        conn.execute(text(query), {"p":promotor.upper(), "s":store_name.upper()})
 
 def get_all_store_mappings():
-    conn = sqlite3.connect('business_data.db')
-    try: df = pd.read_sql_query("SELECT * FROM store_mapping", conn)
-    except: df = pd.DataFrame(columns=['promotor', 'store_name'])
-    conn.close()
-    return df
+    engine = get_connection()
+    try: return pd.read_sql_query("SELECT * FROM store_mapping", engine)
+    except: return pd.DataFrame(columns=['promotor', 'store_name'])
 
 def delete_store_mapping(promotor):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM store_mapping WHERE promotor = ?", (promotor,))
-    conn.commit()
-    conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM store_mapping WHERE promotor = :p"), {"p": promotor})
 
-# --- FUNGSI RIWAYAT UPLOAD ---
 def get_upload_history():
-    conn = sqlite3.connect('business_data.db')
-    try: df = pd.read_sql_query("SELECT upload_timestamp, COUNT(*) as jumlah_data FROM sales_daily GROUP BY upload_timestamp ORDER BY upload_timestamp DESC", conn)
-    except: df = pd.DataFrame()
-    conn.close()
-    return df
+    engine = get_connection()
+    try: return pd.read_sql_query("SELECT upload_timestamp, COUNT(*) as jumlah_data FROM sales_daily GROUP BY upload_timestamp ORDER BY upload_timestamp DESC", engine)
+    except: return pd.DataFrame()
 
 def delete_by_upload_time(ts):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute("DELETE FROM sales_daily WHERE upload_timestamp = ?", (ts,))
-    conn.commit()
-    conn.close()
-
-# --- FUNGSI TARGET BARU (DENGAN MINGGU) ---
+    engine = get_connection()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM sales_daily WHERE upload_timestamp = :ts"), {"ts": ts})
 
 def get_targets_by_store(store_name, week_period):
-    """Ambil target spesifik untuk toko DAN minggu tertentu"""
-    conn = sqlite3.connect('business_data.db')
+    engine = get_connection()
     try:
-        query = """SELECT category, sub_category, target_value 
-                   FROM sales_targets_weekly 
-                   WHERE store_name = ? AND week_period = ?"""
-        df = pd.read_sql_query(query, conn, params=(store_name, week_period))
-        
-        target_dict = {}
-        for _, row in df.iterrows():
-            target_dict[(row['category'], row['sub_category'])] = row['target_value']
-    except:
-        target_dict = {}
-    conn.close()
-    return target_dict
+        df = pd.read_sql_query(text("SELECT category, sub_category, target_value FROM sales_targets_weekly WHERE store_name = :s AND week_period = :w"), engine, params={"s":store_name, "w":week_period})
+        return {(row['category'], row['sub_category']): row['target_value'] for _, row in df.iterrows()}
+    except: return {}
 
 def update_target_value(store_name, category, sub_category, week_period, new_target):
-    """Simpan target spesifik untuk minggu itu"""
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    c.execute('''INSERT OR REPLACE INTO sales_targets_weekly 
-                 (store_name, category, sub_category, week_period, target_value) 
-                 VALUES (?, ?, ?, ?, ?)''', 
-              (store_name, category, sub_category, week_period, new_target))
-    conn.commit()
-    conn.close()
-    
-# --- UPDATE DATA (AUTO DETECT TABLE) ---
-def update_sales_simple(id_row, col_name, new_val):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    try:
-        # 1. Coba simpan ke 'sales_data' (Versi Stabil/Rollback)
-        query_a = f"UPDATE sales_data SET {col_name} = ? WHERE id = ?"
-        c.execute(query_a, (new_val, id_row))
-        
-        # 2. Jika tidak ada yang terupdate (rowcount=0), coba ke 'sales_daily' (Versi Upload)
-        if c.rowcount == 0:
-            query_b = f"UPDATE sales_daily SET {col_name} = ? WHERE id = ?"
-            c.execute(query_b, (new_val, id_row))
-            
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Gagal Update: {e}") # Cek terminal jika masih gagal
-        return False
-    finally:
-        conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        query = """INSERT INTO sales_targets_weekly (store_name, category, sub_category, week_period, target_value) 
+                   VALUES (:s, :c, :sub, :w, :t) 
+                   ON CONFLICT (store_name, category, sub_category, week_period) DO UPDATE 
+                   SET target_value=EXCLUDED.target_value"""
+        conn.execute(text(query), {"s":store_name, "c":category, "sub":sub_category, "w":week_period, "t":new_target})
 
-# --- FITUR TARGET PROMOTOR PERMANEN ---
 def save_promotor_target(bulan, promotor, target_value):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
-    try:
-        # Bikin tabel otomatis jika belum ada
-        c.execute('''CREATE TABLE IF NOT EXISTS promotor_targets 
-                     (bulan TEXT, promotor TEXT, target INTEGER,
-                     PRIMARY KEY (bulan, promotor))''')
-        # Simpan atau update targetnya
-        c.execute('''INSERT OR REPLACE INTO promotor_targets (bulan, promotor, target) 
-                     VALUES (?, ?, ?)''', (bulan, promotor, target_value))
-        conn.commit()
-    except Exception as e:
-        print(f"Error simpan target: {e}")
-    finally:
-        conn.close()
+    engine = get_connection()
+    with engine.begin() as conn:
+        query = """INSERT INTO promotor_targets (bulan, promotor, target) 
+                   VALUES (:b, :p, :t) 
+                   ON CONFLICT (bulan, promotor) DO UPDATE 
+                   SET target=EXCLUDED.target"""
+        conn.execute(text(query), {"b":bulan, "p":promotor, "t":target_value})
 
 def get_promotor_targets(bulan):
-    conn = sqlite3.connect('business_data.db')
-    c = conn.cursor()
+    engine = get_connection()
     try:
-        c.execute('''CREATE TABLE IF NOT EXISTS promotor_targets 
-                     (bulan TEXT, promotor TEXT, target INTEGER,
-                     PRIMARY KEY (bulan, promotor))''')
-        c.execute('SELECT promotor, target FROM promotor_targets WHERE bulan = ?', (bulan,))
-        return dict(c.fetchall())
-    except Exception:
-        return {}
-    finally:
-        conn.close()
+        df = pd.read_sql_query(text("SELECT promotor, target FROM promotor_targets WHERE bulan = :b"), engine, params={"b":bulan})
+        return dict(zip(df['promotor'], df['target']))
+    except: return {}
