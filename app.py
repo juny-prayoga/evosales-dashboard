@@ -764,6 +764,8 @@ elif menu == "Input Daily Report":
                             st.success(f"✅ Sukses! Database berhasil diperbarui.")
                             st.balloons()
                             st.rerun()
+                            
+                        # PASTIKAN DUA BARIS INI ADA DAN SEJAJAR DENGAN 'try:' DI ATAS
                         except Exception as e:
                             st.error(f"Gagal menyimpan ke database: {e}")
 
