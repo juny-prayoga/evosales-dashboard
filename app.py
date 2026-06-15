@@ -147,7 +147,7 @@ elif menu == "Monthly Report":
 
     df_sales = get_all_sales()
     if not df_sales.empty:
-        # --- PRE-PROCESSING TANGGAL (Termasuk Fix Bahasa Indonesia) ---
+        # --- PRE-PROCESSING TANGGAL ---
         bulan_map = {
             'Januari': 'January', 'Februari': 'February', 'Maret': 'March', 
             'April': 'April', 'Mei': 'May', 'Juni': 'June', 'Juli': 'July', 
@@ -177,43 +177,38 @@ elif menu == "Monthly Report":
             df_bulan = df_sales[df_sales['bulan_label'] == sel_bulan].copy()
             
             with col_f2:
-                # Opsi Minggu Dinamis Berdasarkan Bulan yang Dipilih
                 list_week = sorted(df_bulan['week_period'].dropna().unique().tolist())
                 sel_week = st.multiselect("📆 Filter Minggu (Opsional):", list_week, default=list_week, help="Kosongkan atau pilih semua untuk melihat full 1 bulan.")
             
-            # Filter Data by Minggu (Jika ada yang dipilih)
+            # Filter Data by Minggu
             if sel_week:
                 df_bulan = df_bulan[df_bulan['week_period'].isin(sel_week)]
                 
-            # --- MAPPING TOKO (LOGIKA BARU: BACA STEMPEL PERMANEN) ---
-            # Kita utamakan membaca kolom 'toko' dari database.
-            # Namun untuk data lawas yang mungkin belum ada stempelnya, kita beri backup dari Admin Panel.
+            # --- MAPPING TOKO ---
             df_map_toko = get_all_store_mappings()
             dict_toko = dict(zip(df_map_toko['promotor'].str.upper(), df_map_toko['store_name'].str.upper()))
             
             if 'toko' in df_bulan.columns:
-                # Jika sudah ada stempelnya, gunakan itu. Jika stempelnya kosong/UNKNOWN, isi dengan mapping admin.
                 df_bulan['toko'] = df_bulan['toko'].replace(['', 'UNKNOWN', None], pd.NA).fillna(df_bulan['promotor'].str.upper().map(dict_toko)).fillna('UNKNOWN')
             else:
-                # Jika database belum punya kolom toko sama sekali (fallback aman)
                 df_bulan['toko'] = df_bulan['promotor'].str.upper().map(dict_toko).fillna('UNKNOWN')
             
             # --- HITUNG OMZET (ACTUAL) ---
             df_omzet = df_bulan.groupby(['toko', 'promotor'])['harga'].sum().reset_index()
             
-            # --- UI: SATU HALAMAN OVERVIEW SEMUA TOKO (TANPA TABS) ---
+            # --- UI: SATU HALAMAN OVERVIEW SEMUA TOKO ---
             st.subheader("📊 Executive Summary")
             
-            # 1. AMBIL TARGET DARI DATABASE PERMANEN
+            # 1. AMBIL TARGET DARI DATABASE
             from database import get_promotor_targets, save_promotor_target
-            saved_targets = get_promotor_targets(sel_bulan)
+            saved_targets_data = get_promotor_targets(sel_bulan)
             
-            # Ambil daftar unik toko & promotor
             df_base = df_omzet[['toko', 'promotor']].drop_duplicates().copy()
             df_base['promotor'] = df_base['promotor'].str.upper()
             
-            # Pasangkan target dari database (jika belum ada, default 450 Juta)
-            df_base['Target'] = df_base['promotor'].apply(lambda p: saved_targets.get(p, 450000000))
+            # Ekstrak target dan manual grade dari dict
+            df_base['Target'] = df_base['promotor'].apply(lambda p: saved_targets_data.get(p, {}).get('target', 450000000))
+            df_base['Manual_Grade'] = df_base['promotor'].apply(lambda p: saved_targets_data.get(p, {}).get('grade', None))
             df_targets = df_base.copy()
             
             # 2. GABUNGKAN DENGAN ACTUAL HARI INI
@@ -223,9 +218,14 @@ elif menu == "Monthly Report":
             # 3. KALKULASI PENCAPAIAN
             df_targets['% Ach'] = (df_targets['Actual'] / df_targets['Target']) * 100
             df_targets['% Ach'] = df_targets['% Ach'].fillna(0)
-            df_targets['Grade'] = df_targets['% Ach'].apply(lambda x: 'A' if x >= 100 else ('B' if x >= 90 else ('C' if x >= 80 else 'D')))
             
-            # 4. REKAP TOKO (SUMMARY - TANPA GRADE)
+            # Tentukan Auto Grade
+            df_targets['Auto_Grade'] = df_targets['% Ach'].apply(lambda x: 'A' if x >= 100 else ('B' if x >= 90 else ('C' if x >= 80 else 'D')))
+            
+            # Gunakan Manual Grade jika ada, kalau tidak pakai Auto Grade
+            df_targets['Grade'] = df_targets.apply(lambda row: row['Manual_Grade'] if pd.notna(row['Manual_Grade']) and row['Manual_Grade'] != "" else row['Auto_Grade'], axis=1)
+            
+            # 4. REKAP TOKO (SUMMARY)
             summary_data = []
             toko_list = sorted(df_targets['toko'].unique())
             
@@ -243,10 +243,9 @@ elif menu == "Monthly Report":
                     "Target": f"Rp {t_target:,.0f}".replace(",", "."),
                     "Actual": f"Rp {t_actual:,.0f}".replace(",", "."),
                     "% Ach": t_ach
-                    # Baris "Grade" di sini sudah dihapus
                 })
 
-            # 5. UI METRIK GRAND TOTAL (Pakai Titik)
+            # 5. UI METRIK GRAND TOTAL
             st.write("") 
             m1, m2, m3 = st.columns(3)
             m1.metric("🌟 GRAND TOTAL TARGET", f"Rp {grand_target:,.0f}".replace(",", "."))
@@ -254,7 +253,7 @@ elif menu == "Monthly Report":
             grand_ach = (grand_actual / grand_target * 100) if grand_target > 0 else 0
             m3.metric("📈 TOTAL ACHIEVEMENT", f"{grand_ach:.2f}%")
             
-            # 6. UI TABEL REKAP TOKO (TANPA GRADE)
+            # 6. UI TABEL REKAP TOKO
             if summary_data:
                 st.dataframe(
                     pd.DataFrame(summary_data),
@@ -263,44 +262,59 @@ elif menu == "Monthly Report":
                         "Target": st.column_config.TextColumn("🎯 Target"), 
                         "Actual": st.column_config.TextColumn("💰 Actual"), 
                         "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150)
-                        # Konfigurasi kolom "Grade" di sini juga sudah dihapus
                     },
                     hide_index=True, use_container_width=True
                 )
+
             # ====================================================================
-            # 8. UI TABEL DETAIL PROMOTOR (READ ONLY - FULL TITIK)
+            # 8. UI TABEL DETAIL PROMOTOR (UPDATABLE GRADE)
             # ====================================================================
             st.subheader("👥 Detail Kinerja per Promotor")
             
-            # Siapkan data untuk ditampilkan
             df_display = df_targets[['toko', 'promotor', 'Target', 'Actual', '% Ach', 'Grade']].sort_values(by=["toko", "promotor"]).reset_index(drop=True)
             
-            # TRIK TITIK: Ubah angka mentah menjadi teks dengan titik
             df_display['Target_Text'] = df_display['Target'].apply(lambda x: f"Rp {x:,.0f}".replace(",", "."))
             df_display['Actual_Text'] = df_display['Actual'].apply(lambda x: f"Rp {x:,.0f}".replace(",", "."))
-            
-            # Tampilkan menggunakan dataframe biasa (Bukan data_editor lagi)
-            st.dataframe(
+
+            # Gunakan data_editor alih-alih dataframe
+            edited_df = st.data_editor(
                 df_display[['toko', 'promotor', 'Target_Text', 'Actual_Text', '% Ach', 'Grade']],
                 column_config={
-                    "toko": st.column_config.TextColumn("🏪 Toko"),
-                    "promotor": st.column_config.TextColumn("👤 Promotor"),
-                    "Target_Text": st.column_config.TextColumn("🎯 Target"), # Sekarang pakai teks ber-titik!
-                    "Actual_Text": st.column_config.TextColumn("💰 Actual"), # Sekarang pakai teks ber-titik!
-                    "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150),
-                    "Grade": st.column_config.TextColumn("🏆 Grade")
+                    "toko": st.column_config.TextColumn("🏪 Toko", disabled=True),
+                    "promotor": st.column_config.TextColumn("👤 Promotor", disabled=True),
+                    "Target_Text": st.column_config.TextColumn("🎯 Target", disabled=True),
+                    "Actual_Text": st.column_config.TextColumn("💰 Actual", disabled=True),
+                    "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150, disabled=True),
+                    "Grade": st.column_config.SelectboxColumn("🏆 Grade (Edit Disini)", options=["A", "B", "C", "D"], required=False) # Kolom interaktif
                 },
-                hide_index=True, use_container_width=True
+                hide_index=True, use_container_width=True,
+                key=f"editor_grade_{sel_bulan}"
             )
             
-            
+            col_save1, col_save2 = st.columns([1, 4])
+            with col_save1:
+                if st.button("💾 Simpan Grade", type="primary", use_container_width=True):
+                    # Bandingkan data awal dengan data hasil edit
+                    for i in range(len(df_display)):
+                        promo = df_display.loc[i, 'promotor']
+                        old_grade = df_display.loc[i, 'Grade']
+                        new_grade = edited_df.loc[i, 'Grade']
+                        
+                        # Jika ada perubahan grade, simpan ke database
+                        if old_grade != new_grade:
+                            current_target = df_targets[df_targets['promotor'] == promo]['Target'].values[0]
+                            # Panggil save_promotor_target dengan grade baru
+                            save_promotor_target(sel_bulan, promo, current_target, new_grade)
+                    
+                    st.success("Perubahan Grade berhasil disimpan!")
+                    st.rerun()
+
             # ====================================================================
-            # 7. FITUR EDIT TARGET (DIPISAHKAN AGAR AMAN)
+            # 7. FITUR EDIT TARGET
             # ====================================================================
             st.divider()
             st.subheader("🎯 Setup Target Promotor")
             
-            # Kita buat kotak khusus yang bisa dibuka-tutup (Expander)
             with st.expander("⚙️ Klik di sini untuk Mengatur Target Promotor", expanded=False):
                 col_ed1, col_ed2, col_ed3 = st.columns([2, 2, 1])
                 
@@ -309,16 +323,17 @@ elif menu == "Monthly Report":
                     pilih_promo = st.selectbox("👤 Pilih Promotor:", list_promo, key="edit_promo_sel")
                 
                 with col_ed2:
-                    # Ambil target saat ini dari memori/database untuk ditampilkan di kotak input
+                    # Target value (bukan dictionary)
                     target_saat_ini = df_targets[df_targets['promotor'] == pilih_promo]['Target'].values[0]
                     input_target = st.number_input("💰 Masukkan Target Baru:", min_value=0, step=10000000, value=int(target_saat_ini), key="edit_target_val")
                 
                 with col_ed3:
-                    st.write("") # Spacing agar tombol sejajar
+                    st.write("") 
                     st.write("")
-                    if st.button("💾 Simpan", type="primary", use_container_width=True):
-                        # Panggil fungsi simpan ke database yang sudah kita buat sebelumnya
-                        save_promotor_target(sel_bulan, pilih_promo, input_target)
+                    if st.button("💾 Simpan Target", type="primary", use_container_width=True):
+                        # Ambil grade saat ini agar tidak hilang
+                        current_grade = df_targets[df_targets['promotor'] == pilih_promo]['Grade'].values[0]
+                        save_promotor_target(sel_bulan, pilih_promo, input_target, current_grade)
                         st.success(f"Target {pilih_promo} diperbarui!")
                         st.rerun()
 
@@ -994,3 +1009,4 @@ elif menu == "ADMIN_PAGE":
             opts = {f"{r['upload_timestamp']} ({r['jumlah_data']})": r['upload_timestamp'] for _, r in df_h.iterrows()}
             sel = st.selectbox("Pilih Sesi", list(opts.keys()))
             if st.button("Hapus Sesi"): delete_by_upload_time(opts[sel]); st.rerun()
+
