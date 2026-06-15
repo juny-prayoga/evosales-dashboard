@@ -298,15 +298,26 @@ elif menu == "Monthly Report":
                 if st.button("💾 Simpan Grade", type="primary", use_container_width=True):
                     # Bandingkan data awal dengan data hasil edit
                     for i in range(len(df_display)):
-                        promo = df_display.loc[i, 'promotor']
+                        promo = str(df_display.loc[i, 'promotor'])
                         old_grade = df_display.loc[i, 'Grade']
                         new_grade = edited_df.loc[i, 'Grade']
                         
+                        # FIX 1: Sanitasi nilai Kosong (NaN) menjadi None agar dimengerti Database
+                        if pd.isna(new_grade) or new_grade == "None":
+                            new_grade = None
+                        else:
+                            new_grade = str(new_grade).strip()
+                            
+                        if pd.isna(old_grade) or old_grade == "None":
+                            old_grade = None
+                        else:
+                            old_grade = str(old_grade).strip()
+
                         # Jika ada perubahan grade, simpan ke database
                         if old_grade != new_grade:
                             current_target = df_targets[df_targets['promotor'] == promo]['Target'].values[0]
-                            # Panggil save_promotor_target dengan grade baru
-                            save_promotor_target(sel_bulan, promo, current_target, new_grade)
+                            # FIX 2: Paksa target menjadi integer murni (bukan numpy.int64)
+                            save_promotor_target(sel_bulan, promo, int(current_target), new_grade)
                     
                     st.success("Perubahan Grade berhasil disimpan!")
                     st.rerun()
@@ -333,9 +344,15 @@ elif menu == "Monthly Report":
                     st.write("") 
                     st.write("")
                     if st.button("💾 Simpan Target", type="primary", use_container_width=True):
-                        # Ambil grade saat ini agar tidak hilang
                         current_grade = df_targets[df_targets['promotor'] == pilih_promo]['Grade'].values[0]
-                        save_promotor_target(sel_bulan, pilih_promo, input_target, current_grade)
+                        
+                        # FIX: Sanitasi tipe data
+                        if pd.isna(current_grade) or current_grade == "None":
+                            current_grade = None
+                        else:
+                            current_grade = str(current_grade).strip()
+                            
+                        save_promotor_target(sel_bulan, str(pilih_promo), int(input_target), current_grade)
                         st.success(f"Target {pilih_promo} diperbarui!")
                         st.rerun()
 
@@ -1011,6 +1028,7 @@ elif menu == "ADMIN_PAGE":
             opts = {f"{r['upload_timestamp']} ({r['jumlah_data']})": r['upload_timestamp'] for _, r in df_h.iterrows()}
             sel = st.selectbox("Pilih Sesi", list(opts.keys()))
             if st.button("Hapus Sesi"): delete_by_upload_time(opts[sel]); st.rerun()
+
 
 
 
