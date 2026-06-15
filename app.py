@@ -285,7 +285,7 @@ elif menu == "Monthly Report":
                     "Target_Text": st.column_config.TextColumn("🎯 Target"),
                     "Actual_Text": st.column_config.TextColumn("💰 Actual"),
                     "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150),
-                    "Grade": st.column_config.SelectboxColumn("🏆 Grade (Edit Disini)", options=["A", "B", "C", "D"], required=False) # Kolom interaktif
+                    "Grade": st.column_config.SelectboxColumn("🏆 Grade", options=["A", "B", "C", "D"], required=False) # Kolom interaktif
                 },
                 # PENGUNCIAN KOLOM DIPINDAHKAN KE SINI:
                 disabled=["toko", "promotor", "Target_Text", "Actual_Text", "% Ach"], 
@@ -1011,5 +1011,6 @@ elif menu == "ADMIN_PAGE":
             opts = {f"{r['upload_timestamp']} ({r['jumlah_data']})": r['upload_timestamp'] for _, r in df_h.iterrows()}
             sel = st.selectbox("Pilih Sesi", list(opts.keys()))
             if st.button("Hapus Sesi"): delete_by_upload_time(opts[sel]); st.rerun()
+
 
 
