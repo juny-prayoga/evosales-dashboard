@@ -275,18 +275,20 @@ elif menu == "Monthly Report":
             
             df_display['Target_Text'] = df_display['Target'].apply(lambda x: f"Rp {x:,.0f}".replace(",", "."))
             df_display['Actual_Text'] = df_display['Actual'].apply(lambda x: f"Rp {x:,.0f}".replace(",", "."))
-
+          
             # Gunakan data_editor alih-alih dataframe
             edited_df = st.data_editor(
                 df_display[['toko', 'promotor', 'Target_Text', 'Actual_Text', '% Ach', 'Grade']],
                 column_config={
-                    "toko": st.column_config.TextColumn("🏪 Toko", disabled=True),
-                    "promotor": st.column_config.TextColumn("👤 Promotor", disabled=True),
-                    "Target_Text": st.column_config.TextColumn("🎯 Target", disabled=True),
-                    "Actual_Text": st.column_config.TextColumn("💰 Actual", disabled=True),
-                    "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150, disabled=True),
+                    "toko": st.column_config.TextColumn("🏪 Toko"),
+                    "promotor": st.column_config.TextColumn("👤 Promotor"),
+                    "Target_Text": st.column_config.TextColumn("🎯 Target"),
+                    "Actual_Text": st.column_config.TextColumn("💰 Actual"),
+                    "% Ach": st.column_config.ProgressColumn("📊 % Ach", format="%.2f%%", min_value=0, max_value=150),
                     "Grade": st.column_config.SelectboxColumn("🏆 Grade (Edit Disini)", options=["A", "B", "C", "D"], required=False) # Kolom interaktif
                 },
+                # PENGUNCIAN KOLOM DIPINDAHKAN KE SINI:
+                disabled=["toko", "promotor", "Target_Text", "Actual_Text", "% Ach"], 
                 hide_index=True, use_container_width=True,
                 key=f"editor_grade_{sel_bulan}"
             )
@@ -1009,4 +1011,5 @@ elif menu == "ADMIN_PAGE":
             opts = {f"{r['upload_timestamp']} ({r['jumlah_data']})": r['upload_timestamp'] for _, r in df_h.iterrows()}
             sel = st.selectbox("Pilih Sesi", list(opts.keys()))
             if st.button("Hapus Sesi"): delete_by_upload_time(opts[sel]); st.rerun()
+
 
