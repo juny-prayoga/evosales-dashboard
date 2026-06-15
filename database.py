@@ -99,18 +99,19 @@ def update_target_value(store_name, category, sub_category, week_period, new_tar
                    SET target_value=EXCLUDED.target_value"""
         conn.execute(text(query), {"s":store_name, "c":category, "sub":sub_category, "w":week_period, "t":new_target})
 
-def save_promotor_target(bulan, promotor, target_value):
+def save_promotor_target(bulan, promotor, target_value, grade=None):
     engine = get_connection()
     with engine.begin() as conn:
-        query = """INSERT INTO promotor_targets (bulan, promotor, target) 
-                   VALUES (:b, :p, :t) 
+        query = """INSERT INTO promotor_targets (bulan, promotor, target, grade) 
+                   VALUES (:b, :p, :t, :g) 
                    ON CONFLICT (bulan, promotor) DO UPDATE 
-                   SET target=EXCLUDED.target"""
-        conn.execute(text(query), {"b":bulan, "p":promotor, "t":target_value})
+                   SET target=EXCLUDED.target, grade=EXCLUDED.grade"""
+        conn.execute(text(query), {"b":bulan, "p":promotor, "t":target_value, "g":grade})
 
 def get_promotor_targets(bulan):
     engine = get_connection()
     try:
-        df = pd.read_sql_query(text("SELECT promotor, target FROM promotor_targets WHERE bulan = :b"), engine, params={"b":bulan})
-        return dict(zip(df['promotor'], df['target']))
+        df = pd.read_sql_query(text("SELECT promotor, target, grade FROM promotor_targets WHERE bulan = :b"), engine, params={"b":bulan})
+        return {row['promotor']: {'target': row['target'], 'grade': row['grade']} for _, row in df.iterrows()}
     except: return {}
+
