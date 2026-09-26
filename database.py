@@ -6,6 +6,11 @@ from sqlalchemy import create_engine, text
 @st.cache_resource
 def get_connection():
     db_url = st.secrets["SUPABASE_URL"]
+    # Pastikan menggunakan driver psycopg (v3) yang kompatibel dengan Python 3.14
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif db_url.startswith("postgresql+psycopg2://"):
+        db_url = db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
     return create_engine(db_url)
 
 def init_db():
